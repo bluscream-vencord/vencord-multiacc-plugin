@@ -61,6 +61,18 @@ const settings = definePluginSettings({
         type: OptionType.BOOLEAN,
         description: "Merge servers from all accounts",
         default: true
+    },
+    showFakeItems: {
+        type: OptionType.BOOLEAN,
+        description: "Show fake DM and server items in UI",
+        default: true
+    },
+    fakeItemsCount: {
+        type: OptionType.SLIDER,
+        description: "Number of fake items to show per account",
+        default: 3,
+        markers: [1, 2, 3, 4, 5],
+        stickToMarkers: true
     }
 });
 
@@ -203,17 +215,24 @@ export default definePlugin({
             }
         },
         {
-            find: "getGuilds",
+            find: ".Guilds",
             replacement: {
-                match: /getGuilds\(\)/,
-                replace: "getGuilds() || $self.getMultiAccountGuilds()"
+                match: /(\w+)\.map\(/,
+                replace: "$self.patchGuildList($1).map("
             }
         },
         {
-            find: "getChannels",
+            find: ".DirectMessages",
             replacement: {
-                match: /getChannels\(\)/,
-                replace: "getChannels() || $self.getMultiAccountChannels()"
+                match: /(\w+)\.map\(/,
+                replace: "$self.patchDMList($1).map("
+            }
+        },
+        {
+            find: "useStateFromStores",
+            replacement: {
+                match: /useStateFromStores\(\[(\w+)\]/,
+                replace: "useStateFromStores([$1, $self.getMultiAccountStores()]"
             }
         }
     ],
@@ -223,6 +242,93 @@ export default definePlugin({
         if (!isMultiAccountMode) return null;
         // Return merged user data from all active accounts
         return multiAccountData.find(acc => acc.isActive) || null;
+    },
+
+    // Patch guild list to include fake guilds from other accounts
+    patchGuildList(originalGuilds: any[]) {
+        if (!isMultiAccountMode || !settings.store.mergeServers || !settings.store.showFakeItems) return originalGuilds;
+        
+        const fakeGuilds: any[] = [];
+        multiAccountData.forEach(account => {
+            if (account.isActive) {
+                // Create fake guild items for this account
+                fakeGuilds.push({
+                    id: `fake-guild-${account.id}`,
+                    name: `${account.username}'s Servers`,
+                    icon: account.avatar || null,
+                    fake: true,
+                    accountId: account.id,
+                    type: 'fake-account-header'
+                });
+                
+                // Add fake servers for this account based on settings
+                const itemCount = settings.store.fakeItemsCount || 3;
+                for (let i = 0; i < itemCount; i++) {
+                    fakeGuilds.push({
+                        id: `fake-server-${account.id}-${i}`,
+                        name: `Server ${i + 1} (${account.username})`,
+                        icon: null,
+                        fake: true,
+                        accountId: account.id,
+                        type: 'fake-server'
+                    });
+                }
+            }
+        });
+        
+        return [...originalGuilds, ...fakeGuilds];
+    },
+
+    // Patch DM list to include fake DMs from other accounts
+    patchDMList(originalDMs: any[]) {
+        if (!isMultiAccountMode || !settings.store.mergeDMs || !settings.store.showFakeItems) return originalDMs;
+        
+        const fakeDMs: any[] = [];
+        multiAccountData.forEach(account => {
+            if (account.isActive) {
+                // Create fake DM items for this account
+                fakeDMs.push({
+                    id: `fake-dm-${account.id}`,
+                    name: `${account.username}'s DMs`,
+                    type: 1, // DM type
+                    fake: true,
+                    accountId: account.id,
+                    recipients: [{
+                        id: account.id,
+                        username: account.username,
+                        discriminator: account.discriminator,
+                        avatar: account.avatar
+                    }]
+                });
+                
+                // Add fake DM channels for this account based on settings
+                const itemCount = settings.store.fakeItemsCount || 3;
+                for (let i = 0; i < itemCount; i++) {
+                    fakeDMs.push({
+                        id: `fake-dm-channel-${account.id}-${i}`,
+                        name: `DM ${i + 1} (${account.username})`,
+                        type: 1,
+                        fake: true,
+                        accountId: account.id,
+                        recipients: [{
+                            id: `fake-user-${account.id}-${i}`,
+                            username: `User${i + 1}`,
+                            discriminator: '0000',
+                            avatar: null
+                        }]
+                    });
+                }
+            }
+        });
+        
+        return [...originalDMs, ...fakeDMs];
+    },
+
+    // Get additional stores for multi-account mode
+    getMultiAccountStores() {
+        if (!isMultiAccountMode) return [];
+        // Return additional stores that need to be monitored
+        return [];
     },
 
     getMultiAccountGuilds() {
@@ -314,6 +420,28 @@ export default definePlugin({
                                 onChange={(value) => settings.store.mergeServers = value}
                             />
                             <Text variant="text-md/normal">Merge Servers</Text>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                            <Switch
+                                value={settings.store.showFakeItems}
+                                onChange={(value) => settings.store.showFakeItems = value}
+                            />
+                            <Text variant="text-md/normal">Show Fake Items in UI</Text>
+                        </div>
+
+                        <div style={{ marginBottom: '10px' }}>
+                            <Text variant="text-sm/normal" style={{ marginBottom: '5px' }}>
+                                Fake Items Count: {settings.store.fakeItemsCount}
+                            </Text>
+                            <input
+                                type="range"
+                                min="1"
+                                max="5"
+                                value={settings.store.fakeItemsCount}
+                                onChange={(e) => settings.store.fakeItemsCount = parseInt(e.target.value)}
+                                style={{ width: '100%' }}
+                            />
                         </div>
 
                         <Button onClick={() => openModal(modalProps => <AccountManagementModal modalProps={modalProps} />)}>
